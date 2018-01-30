@@ -115,7 +115,7 @@ class _netD(nn.Module):
         self.dropout4 = nn.Dropout2d(p=0.5, inplace=False)
 
         self.aux_linear = nn.Linear(6144, nb_label)
-        self.disc_linear = nn.Linear(6144 , 1)
+        self.disc_linear = nn.Linear(nb_label , 1)
         self.softmax = nn.Softmax()
         self.sigmoid = nn.Sigmoid()
         # self.sigmoid = nn.Sigmoid()
@@ -194,7 +194,7 @@ class _netD(nn.Module):
         before2 = self.aux_linear(before)
         # print(before2.data.shape, '21')
         # raw_input()
-        discriminate = self.disc_linear(before)
+        discriminate = self.disc_linear(before2)
         discriminate = self.sigmoid(discriminate)
 
         after = self.softmax(before2)

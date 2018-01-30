@@ -12,7 +12,7 @@ import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
 from torch.autograd import Variable
-from discriminator import _netD, _netG
+
 import numpy as np 
 import helper
 from collections import OrderedDict
@@ -27,7 +27,7 @@ parser.add_argument('--nz', type=int, default=100, help='size of the latent z ve
 parser.add_argument('--ngf', type=int, default=32)
 parser.add_argument('--ndf', type=int, default=32)
 parser.add_argument('--niter', type=int, default=250, help='number of epochs to train for')
-parser.add_argument('--lr', type=float, default=0.003, help='learning rate, default=0.0003')
+parser.add_argument('--lr', type=float, default=0.0003, help='learning rate, default=0.0003')
 parser.add_argument('--beta1', type=float, default=0.7, help='beta1 for adam. default=0.7')
 parser.add_argument('--cuda', action='store_true', help='enables cuda')
 parser.add_argument('--ngpu', type=int, default=1, help='number of GPUs to use')
@@ -44,6 +44,11 @@ try:
     os.makedirs(args.outf)
 except OSError:
     pass
+
+if args.dataset == 'ecg':
+    from discriminator_heart import _netD, _netG
+else:
+    from discriminator import _netD, _netG
 
 if args.manualSeed is None:
     args.manualSeed = random.randint(1, 10000)
@@ -88,6 +93,18 @@ elif args.dataset == 'cifar10':
                                transforms.ToTensor(),
                                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
                            ]))
+
+elif args.dataset == 'ecg':
+    trainx, trainy = helper.read_dataset(args.dataroot + "/training_data4.hdf5")
+    testx, testy = helper.read_dataset(args.dataroot + "/test_data4.hdf5")
+    trainx = torch.from_numpy(trainx[:,10:,30:-20,:])
+    testx = torch.from_numpy(testx[:,10:,30:-20,:])
+
+    trainy = torch.from_numpy(np.argmax(trainy, axis=1))
+    testy = torch.from_numpy(np.argmax(testy, axis=1))
+    dataset = torch.utils.data.TensorDataset(trainx, trainy)
+    testset = torch.utils.data.TensorDataset(testx, testy)
+
 elif args.dataset == 'mnist':
     dataset = dset.MNIST(root=args.dataroot, download=True,
                            transform=transforms.Compose([
@@ -102,8 +119,8 @@ assert dataset
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=1,
                                          shuffle=True, num_workers=int(0))
 
-testloader = torch.utils.data.DataLoader(testset, batch_size=args.batchSize,
-                                         shuffle=True, num_workers=int(0))
+testloader = torch.utils.data.DataLoader(testset, batch_size=1,
+                                         shuffle=False, num_workers=int(0))
 
 txs = []
 tys = []
@@ -112,21 +129,35 @@ for data in dataloader:
     txs.append(img)
     tys.append(label)
     
-# testx = []
-# for data in testset:
-#     img = data
-#     testx.append(img)
+txs2 = []
+tys2 = []
+for data in testloader:
+    img, label = data
+    txs2.append(img)
+    tys2.append(label)
+
+#Loading the testdata properly
+testx = torch.squeeze(torch.stack(txs2, dim=0), dim=4)
+testy = torch.stack(tys2, dim=0)
+
+testset = torch.utils.data.TensorDataset(testx, testy)
+
+testloader = torch.utils.data.DataLoader(testset, batch_size=args.batchSize,
+                                         shuffle=False, num_workers=int(0), drop_last = True)
+
 
 
 #Making the labelled/unlabelled split
 splitinds = int(args.split*np.shape(txs)[0])
-x_unlab = torch.squeeze(torch.stack(txs, dim=0))
+x_unlab = torch.squeeze(torch.stack(txs, dim=0), dim=4)
 y_unlab = torch.stack(tys, dim=0)
-x_lab = torch.squeeze(torch.stack(txs[splitinds:],dim=0))
+x_lab = torch.squeeze(torch.stack(txs[splitinds:],dim=0), dim=4)
 y_lab = torch.stack(tys[splitinds:],dim=0)
 
 labset = torch.utils.data.TensorDataset(x_lab, y_lab)
 unlabset = torch.utils.data.TensorDataset(x_unlab, y_unlab)
+
+
 
 labloader = torch.utils.data.DataLoader(labset, batch_size=args.batchSize,
                                          shuffle=True, num_workers=int(args.workers), drop_last = True)
@@ -140,6 +171,9 @@ ndf = int(args.ndf)
 if args.dataset == 'mnist':
     nc = 1
     nb_label = 10
+elif args.dataset == 'ecg':
+    nc = 1
+    nb_label = 15
 else:
     nc = 3
     nb_label = 10
@@ -181,7 +215,7 @@ print(netD)
 
 
 
-input = torch.FloatTensor(args.batchSize, 3, args.imageSize, args.imageSize)
+input = torch.FloatTensor(args.batchSize, nc, args.imageSize, args.imageSize)
 
 d_label = torch.FloatTensor(args.batchSize,1)
 c_label = torch.LongTensor(args.batchSize,1)
@@ -220,6 +254,7 @@ total_length = 0
 for data in testloader:
 
     img, label = data
+    # print(img.size())
     c_label.resize_(args.batchSize).copy_(label)
     input.resize_(img.size()).copy_(img)
     inputv = Variable(input)

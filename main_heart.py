@@ -12,7 +12,7 @@ import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
 from torch.autograd import Variable
-from discriminator import _netD, _netG
+from discriminator_heart import _netD, _netG
 import numpy as np 
 import helper
 
@@ -23,9 +23,9 @@ parser.add_argument('--workers', type=int, help='number of data loading workers'
 parser.add_argument('--batchSize', type=int, default=40, help='input batch size')
 parser.add_argument('--imageSize', type=int, default=32, help='the height / width of the input image to network')
 parser.add_argument('--nz', type=int, default=100, help='size of the latent z vector')
-parser.add_argument('--ngf', type=int, default=32)
-parser.add_argument('--ndf', type=int, default=32)
-parser.add_argument('--niter', type=int, default=250, help='number of epochs to train for')
+parser.add_argument('--ngf', type=int, default=64)
+parser.add_argument('--ndf', type=int, default=64)
+parser.add_argument('--niter', type=int, default=20, help='number of epochs to train for')
 parser.add_argument('--lr', type=float, default=0.0003, help='learning rate, default=0.0003')
 parser.add_argument('--beta1', type=float, default=0.7, help='beta1 for adam. default=0.7')
 parser.add_argument('--cuda', action='store_true', help='enables cuda')
@@ -87,6 +87,17 @@ elif args.dataset == 'cifar10':
                                transforms.ToTensor(),
                                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
                            ]))
+elif args.dataset == 'ecg':
+    trainx, trainy = helper.read_dataset(args.dataroot + "/training_data4.hdf5")
+    testx, testy = helper.read_dataset(args.dataroot + "/test_data4.hdf5")
+    trainx = torch.from_numpy(trainx[:,10:,30:-20,:])
+    testx = torch.from_numpy(testx[:,10:,30:-20,:])
+
+    trainy = torch.from_numpy(np.argmax(trainy, axis=1))
+    testy = torch.from_numpy(np.argmax(testy, axis=1))
+    dataset = torch.utils.data.TensorDataset(trainx, trainy)
+    testset = torch.utils.data.TensorDataset(testx, testy)
+    
 elif args.dataset == 'mnist':
     dataset = dset.MNIST(root=args.dataroot, download=True,
                            transform=transforms.Compose([
@@ -117,9 +128,11 @@ for data in dataloader:
 
 #Making the labelled/unlabelled split
 splitinds = int(args.split*np.shape(txs)[0])
-x_unlab = torch.squeeze(torch.stack(txs, dim=0))
+x_unlab = torch.squeeze(torch.stack(txs, dim=0), dim=4)
+# print(x_unlab.size())
+# input()
 y_unlab = torch.stack(tys, dim=0)
-x_lab = torch.squeeze(torch.stack(txs[splitinds:],dim=0))
+x_lab = torch.squeeze(torch.stack(txs[splitinds:],dim=0), dim =4)
 y_lab = torch.stack(tys[splitinds:],dim=0)
 
 labset = torch.utils.data.TensorDataset(x_lab, y_lab)
@@ -135,8 +148,11 @@ nz = int(args.nz)
 ngf = int(args.ngf)
 ndf = int(args.ndf)
 if args.dataset == 'mnist':
-    nc = 1
+    nc = 1 
     nb_label = 10
+elif args.dataset == 'ecg':
+    nc = 1
+    nb_label = 15
 else:
     nc = 3
     nb_label = 10
@@ -255,6 +271,11 @@ for epoch in range(args.niter):
         x_unlab.append(img)
         y_unlab.append(label)
     
+    total_correct_unl = 0
+    total_length_unl = 0
+
+    total_correct_lab = 0
+    total_length_lab = 0
 
     for i, img2 in enumerate(x_unlab):
         ############################
@@ -314,6 +335,13 @@ for epoch in range(args.niter):
         c_label.resize_(batch_size).copy_(unl_label)
 
         correct_unl, length_unl = test(after2, c_label)
+
+
+        total_correct_unl += correct_unl
+        total_length_unl += length_unl
+
+        total_correct_lab += correct
+        total_length_lab += length
 
         # train with fake
         noise.resize_(batch_size, nz,1,1).normal_(0, 1)
@@ -414,6 +442,10 @@ for epoch in range(args.niter):
             vutils.save_image(fake.data,'%s/fake_samples_epoch_%03d.png' % (args.outf, epoch),
                     normalize=True)
 
+    lab_training_error = 1.0 - float(total_correct_lab)/float(total_length_lab)
+    unlab_training_error = 1.0 - float(total_correct_unl)/float(total_length_unl)        
+    print('[%d/%d] Labelled_Training_Error: %.4f Unlabelled_Training_Error: %.4f'
+              % (epoch, args.niter,lab_training_error, unlab_training_error))
     # do checkpointing
     d = np.array(loss_d)
     g = np.array(loss_g)
@@ -421,4 +453,3 @@ for epoch in range(args.niter):
     np.save('%s/LossD_epoch_%d.npy' % (args.outf, epoch), d)
     torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (args.outf, epoch))
     torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' % (args.outf, epoch))
-    

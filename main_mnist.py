@@ -12,7 +12,7 @@ import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
 from torch.autograd import Variable
-from discriminator import _netD, _netG
+from discriminator_mnist import _netD, _netG
 import numpy as np 
 import helper
 
@@ -26,7 +26,7 @@ parser.add_argument('--nz', type=int, default=100, help='size of the latent z ve
 parser.add_argument('--ngf', type=int, default=32)
 parser.add_argument('--ndf', type=int, default=32)
 parser.add_argument('--niter', type=int, default=250, help='number of epochs to train for')
-parser.add_argument('--lr', type=float, default=0.0003, help='learning rate, default=0.0003')
+parser.add_argument('--lr', type=float, default=0.003, help='learning rate, default=0.0003')
 parser.add_argument('--beta1', type=float, default=0.7, help='beta1 for adam. default=0.7')
 parser.add_argument('--cuda', action='store_true', help='enables cuda')
 parser.add_argument('--ngpu', type=int, default=1, help='number of GPUs to use')
@@ -167,7 +167,7 @@ input = torch.FloatTensor(args.batchSize, 3, args.imageSize, args.imageSize)
 input2 = torch.FloatTensor(args.batchSize, 3, args.imageSize, args.imageSize)
 
 noise = torch.FloatTensor(args.batchSize, nz)
-fixed_noise = torch.FloatTensor(args.batchSize, nz, 1,1).normal_(0, 1)
+fixed_noise = torch.FloatTensor(args.batchSize, nz).normal_(0, 1)
 d_label = torch.FloatTensor(args.batchSize,1)
 c_label = torch.LongTensor(args.batchSize,1)
 
@@ -178,8 +178,8 @@ fake_label = 0
 if args.cuda:
     netD.cuda()
     netG.cuda()
-    netD = torch.nn.parallel.DataParallel(netD, device_ids=[0, 3])
-    netG = torch.nn.parallel.DataParallel(netG, device_ids=[0, 3])
+    netD = torch.nn.parallel.DataParallel(netD, device_ids=[0, 1])
+    netG = torch.nn.parallel.DataParallel(netG, device_ids=[0, 1])
     d_criterion.cuda()
     c_criterion.cuda()
     gen_criterion.cuda()
@@ -236,8 +236,8 @@ def feature_loss(X1, X2):
 loss_g = list()
 loss_d = list()
 for epoch in range(args.niter):
-    # schedulerG.step()
-    # schedulerD.step()
+    schedulerG.step()
+    schedulerD.step()
 
     x_lab = [] 
     y_lab = []
@@ -316,7 +316,7 @@ for epoch in range(args.niter):
         correct_unl, length_unl = test(after2, c_label)
 
         # train with fake
-        noise.resize_(batch_size, nz,1,1).normal_(0, 1)
+        noise.resize_(batch_size, nz).normal_(0, 1)
 
         # noise.resize_(batch_size, nz, 1, 1).normal_(0, 1)
         noisev = Variable(noise)
@@ -328,7 +328,7 @@ for epoch in range(args.niter):
         noise_[np.arange(batch_size), :nb_label] = label_onehot[np.arange(batch_size)]
 
         noise_ = (torch.from_numpy(noise_))
-        noise_ = noise_.resize_(batch_size, nz, 1, 1)
+        noise_ = noise_.resize_(batch_size, nz)
         noise.copy_(noise_)
 
 
@@ -406,12 +406,12 @@ for epoch in range(args.niter):
               % (epoch, args.niter, i, len(x_unlab),
                  errD.data[0], errD_fake.data[0], errG.data[0], D_x, D_G_z1, D_G_z2, correct, correct_unl, length))
         if i % 100 == 0:
-            vutils.save_image(img,
+            vutils.save_image(img.unsqueeze(1),
                     '%s/real_samples.png' % args.outf,
                     normalize=True)
             fake = netG(fixed_noisev)
             # print(fake.data)
-            vutils.save_image(fake.data,'%s/fake_samples_epoch_%03d.png' % (args.outf, epoch),
+            vutils.save_image(fake.data.unsqueeze(1),'%s/fake_samples_epoch_%03d.png' % (args.outf, epoch),
                     normalize=True)
 
     # do checkpointing
@@ -421,4 +421,3 @@ for epoch in range(args.niter):
     np.save('%s/LossD_epoch_%d.npy' % (args.outf, epoch), d)
     torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (args.outf, epoch))
     torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' % (args.outf, epoch))
-    
