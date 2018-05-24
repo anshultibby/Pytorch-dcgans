@@ -111,13 +111,11 @@ class _netD(nn.Module):
         
         self.conv9 = nn.Conv2d(12*ndf, 12*ndf, kernel_size = (1,1), stride = 1, padding = 0, bias=False)
         self.BatchNorm8 = nn.BatchNorm2d(ndf * 12, momentum = 0.1)
-        # self.network_linear1 = nn.utils.weight_norm(nn.Linear(6*ndf*6*6, 6*6*ndf))
+        self.network_linear1 = nn.utils.weight_norm(nn.Linear(6*ndf*6*6, 6*6*ndf))
         self.dropout4 = nn.Dropout2d(p=0.5, inplace=False)
 
-        # self.pool = nn.MaxPool2d((2,2), stride = 2)
-
         self.aux_linear = nn.Linear(6144, nb_label)
-        self.disc_linear = nn.Linear(6144, 1)
+        self.disc_linear = nn.Linear(6144 , 1)
         self.softmax = nn.Softmax()
         self.sigmoid = nn.Sigmoid()
         # self.sigmoid = nn.Sigmoid()
@@ -174,10 +172,10 @@ class _netD(nn.Module):
         x = self.LeakyReLU(x)
         # print(x.data.shape, '15')
         x = self.conv8(x)
-        x = self.BatchNorm7(x)
+        x8 = self.BatchNorm7(x)
         # print(x.data.shape, '15')
 
-        x = self.LeakyReLU(x)
+        x = self.LeakyReLU(x8)
 
         x = self.conv9(x)
         x = self.BatchNorm8(x)
@@ -188,18 +186,16 @@ class _netD(nn.Module):
 
         # before = self.dropout5(x)
 
-        
+        before = before.view(before.data.shape[0], -1)
+
         pool = before
-        # pool = self.pool(before)
         # print(pool.data.shape, '21')
         # raw_input()
-
-        before = pool.view(pool.data.shape[0], -1)
         before2 = self.aux_linear(before)
         # print(before2.data.shape, '21')
         # raw_input()
         discriminate = self.disc_linear(before)
-        discriminate = self.sigmoid(discriminate)
+        # discriminate = self.sigmoid(discriminate)
 
         after = self.softmax(before2)
-        return discriminate, before2, after, pool 
+        return discriminate, before2, after, pool, x8

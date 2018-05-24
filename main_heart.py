@@ -15,6 +15,8 @@ from torch.autograd import Variable
 from discriminator_heart import _netD, _netG
 import numpy as np 
 import helper
+import skimage.io as skio
+import skimage.transform
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', required=True, help='cifar10 | lsun | imagenet | folder | lfw | fake')
@@ -35,6 +37,12 @@ parser.add_argument('--netD', default='', help="path to netD (to continue traini
 parser.add_argument('--outf', default='.', help='folder to output images and model checkpoints')
 parser.add_argument('--manualSeed', type=int, help='manual seed')
 parser.add_argument('--split', type=float, default=0.1, help='what percentage of data to be considered unlabelled' )
+parser.add_argument('--few', type=int, default = 0, help='determine whether to use a split ratio (set 0) or to specify number of labelled samples per class')
+parser.add_argument('--numlabelled', type=int, default = 0, help='number of labelled samples per class to be used')
+parser.add_argument('--resume', type=int, default = 0, help='Determines whether we are continuing training from a checkpoint (set 1) or staring from scratch (set 0)')
+parser.add_argument('--experiment', type=float, default = 0, help='extra flag to make modifications for runnning special experiments')
+
+
 
 args = parser.parse_args()
 print(args)
@@ -51,6 +59,7 @@ rng = np.random.RandomState(args.manualSeed)
 torch.manual_seed(args.manualSeed)
 if args.cuda:
     torch.cuda.manual_seed_all(args.manualSeed)
+    # device = 1
 
 cudnn.benchmark = True
 
@@ -90,10 +99,72 @@ elif args.dataset == 'cifar10':
 elif args.dataset == 'ecg':
     trainx, trainy = helper.read_dataset(args.dataroot + "/training_data4.hdf5")
     testx, testy = helper.read_dataset(args.dataroot + "/test_data4.hdf5")
-    trainx = torch.from_numpy(trainx[:,10:,30:-20,:])
-    testx = torch.from_numpy(testx[:,10:,30:-20,:])
+    
 
+
+
+    testx = torch.from_numpy(testx[:,10:,30:-20,:])
+    # train = []
+    # trainx = np.array(trainx)
+    # for i, img in enumerate(trainx):
+    #     if i%1000 == 0:
+    #         print(i)
+    #     img = skimage.transform.resize(img,(110,110))
+    #     train.append(img)
+
+    # # print(np.s)
+    trainx = torch.from_numpy(trainx[:,10:,30:-20,:])
     trainy = torch.from_numpy(np.argmax(trainy, axis=1))
+    testy = torch.from_numpy(np.argmax(testy, axis=1))
+
+    dataset = torch.utils.data.TensorDataset(trainx, trainy)
+    print("here", trainx.size())
+    testset = torch.utils.data.TensorDataset(testx, testy)
+    
+elif args.dataset == 'lvh':
+    trainx1, trainy1 = helper.read_dataset(args.dataroot + "/NEW_a4c_lvh_train_1.hdf5")
+    trainx2, trainy2 = helper.read_dataset(args.dataroot + "/NEW_a4c_lvh_train_2.hdf5")
+    unlabx1 = helper.read_unlab_dataset(args.dataroot + "/a4c_1.hdf5")
+    unlabx2 = helper.read_unlab_dataset(args.dataroot + "/a4c_2.hdf5")
+    unlabx3 = helper.read_unlab_dataset(args.dataroot + "/a4c_3.hdf5")
+    print(np.shape(unlabx1))
+    unlaby1 = np.ones(np.shape((unlabx1[0],1)))
+
+    trainx = []
+    unlabx = []
+    trainy = []
+    for i, img in enumerate(trainx1):
+        trainx.append(skimage.transform.resize(img[:,:,0],(110,110)))
+        trainy.append(trainy1[i])
+    for i, img in enumerate(trainx2):
+        trainx.append(skimage.transform.resize(img[:,:,0], (110,110)))
+        trainy.append(trainy2[i])
+    for img in unlabx1:
+        img = np.reshape(img, (600,800))
+        unlabx.append(skimage.transform.resize(img, (110,110)))
+    for img in unlabx2:
+        img = np.reshape(img, (600,800))
+        unlabx.append(skimage.transform.resize(img, (110,110)))
+    for img in unlabx3:
+        img = np.reshape(img, (180,240))
+        unlabx.append(skimage.transform.resize(img, (110,110)))
+
+
+
+
+    testx, testy = helper.read_dataset(args.dataroot + "/a4c_lvh_test.hdf5")
+    trainx = torch.from_numpy(np.array(trainx))
+    testx = torch.from_numpy(testx[:,10:,30:-20,:])
+    unlabx = torch.from_numpy(np.array(unlabx))
+    # trainy = np.array(trainy)
+    # print(trainy[0])
+    # print(np.shape(trainy))
+
+    labels = np.argmax(trainy, axis=1)
+    trainy = torch.from_numpy(labels)
+    # trainy = torch.from_numpy(np.hstack((labels, unlaby1)))
+    # trainy = torch.from_numpy(labels)
+    unlaby1 = torch.ones(unlabx.size()[0],1)
     testy = torch.from_numpy(np.argmax(testy, axis=1))
     dataset = torch.utils.data.TensorDataset(trainx, trainy)
     testset = torch.utils.data.TensorDataset(testx, testy)
@@ -108,41 +179,6 @@ elif args.dataset == 'fake':
     dataset = dset.FakeData(image_size=(3, args.imageSize, args.imageSize),
                             transform=transforms.ToTensor())
 assert dataset
-
-dataloader = torch.utils.data.DataLoader(dataset, batch_size=1,
-                                         shuffle=True, num_workers=int(0))
-
-
-txs = []
-tys = []
-for data in dataloader:
-    img, label = data
-    txs.append(img)
-    tys.append(label)
-    
-# testx = []
-# for data in testset:
-#     img = data
-#     testx.append(img)
-
-
-#Making the labelled/unlabelled split
-splitinds = int(args.split*np.shape(txs)[0])
-x_unlab = torch.squeeze(torch.stack(txs, dim=0), dim=4)
-# print(x_unlab.size())
-# input()
-y_unlab = torch.stack(tys, dim=0)
-x_lab = torch.squeeze(torch.stack(txs[splitinds:],dim=0), dim =4)
-y_lab = torch.stack(tys[splitinds:],dim=0)
-
-labset = torch.utils.data.TensorDataset(x_lab, y_lab)
-unlabset = torch.utils.data.TensorDataset(x_unlab, y_unlab)
-
-labloader = torch.utils.data.DataLoader(labset, batch_size=args.batchSize,
-                                         shuffle=True, num_workers=int(args.workers), drop_last = True)
-
-unlabloader = torch.utils.data.DataLoader(unlabset, batch_size=args.batchSize,
-                                         shuffle=True, num_workers=int(args.workers), drop_last = True)
 ngpu = int(args.ngpu)
 nz = int(args.nz)
 ngf = int(args.ngf)
@@ -153,23 +189,157 @@ if args.dataset == 'mnist':
 elif args.dataset == 'ecg':
     nc = 1
     nb_label = 15
+elif args.dataset == 'lvh':
+    nc = 1
+    nb_label = 2
 else:
     nc = 3
     nb_label = 10
 
 
+dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batchSize,
+                                         shuffle=True, num_workers=int(0))
+
+txs = []
+tys = []
+for data in dataloader:
+
+    img, label = data
+    txs.append(img)
+    tys.append(label)
+# testx = []
+# for data in testset:
+#     img = data
+#     testx.append(img)
+cats = dict()
+for i in range(nb_label):
+    cats[i] = []
+for i,lab in enumerate(tys):
+#     print(cats)
+    lab = lab.numpy()[0]
+#     print(lab)
+    if lab in cats:
+        a = cats[lab]
+        a.append(i)
+        cats[lab] = a
+    else:
+        a = [i]
+        cats[lab] = a
+
+#Making the labelled/unlabelled split
+if args.few == 0:
+    if args.dataset == 'lvh':
+    
+    # print(torch.stack(txs, dim=0).size())
+    # input()
+        x_unlab = torch.stack(unlabx)
+        x_unlab = torch.unsqueeze(x_unlab, 1)
+        # print(x_unlab.size())
+        # input()
+        print(unlaby1.size())
+        y_unlab = torch.stack(unlaby1, dim=0)
+        x_lab = torch.stack(txs)
+        y_lab = torch.stack(tys,dim=0)
+        for key in cats.keys():
+            print(key)
+            print(np.shape(cats[key]))
+        print(x_lab.size(), "x_lab")
+        print(x_unlab.size(), "x_unlab")
+        # input()
+    else:
+        txs = np.array(txs)
+        tys = np.array(tys)
+        labelled_inds = []
+        # for key in cats.keys():
+        #     a = cats[key][:]
+        #     splitinds = int(len(a)*args.split)
+        #     print(key, np.shape(cats[key]))
+            # labelled_inds.extend(cats[key][:splitinds])
+        txs = torch.from_numpy(txs)
+        tys = torch.from_numpy(tys)
+        print(torch.stack(txs, dim=0).size())
+        x_unlab = torch.squeeze(torch.stack(txs, dim=0), dim=4)
+        y_unlab = torch.stack(tys, dim=0)
+        x_lab = torch.squeeze(torch.stack(txs,dim=0), dim =4)
+        y_lab = torch.stack(tys,dim=0)
+else:
+    if args.experiment == 0:
+        txs = np.array(txs)
+        tys = np.array(tys)
+        splitinds = args.numlabelled
+        labelled_inds = []
+        for key in cats.keys():
+            print(key)
+            labelled_inds.extend(cats[key][:splitinds])
+        # x_unlab = torch.squeeze(torch.stack(txs, dim=0), dim=4)
+        # y_unlab = torch.stack(tys, dim=0)
+        # x_lab = torch.squeeze(torch.stack(txs[labelled_inds],dim=0), dim =4)
+        # y_lab = torch.stack(tys[labelled_inds],dim=0)
+    else:
+        # nb_label = 2
+        txs = np.array(txs)
+        tys = np.array(tys)
+        splitinds = args.numlabelled
+        labelled_inds = []
+        unlabelled_inds = []
+
+        for key in cats.keys():
+            print(key, np.shape(cats[key]))
+            if key == 5:
+                labelled_inds.extend(cats[key][:splitinds])
+                a = cats[key][:]
+                index = int(0.5*args.experiment*len(a))
+                print(len(a), "len 5")
+                unlabelled_inds.extend(a[:index])
+            elif key == 3:
+                labelled_inds.extend(cats[key][:splitinds])
+                a = cats[key][:]
+                index  = int(len(a))
+                print(len(a), "len 3")
+                unlabelled_inds.extend(a[:index])
+
+
+    x_unlab = torch.squeeze(torch.stack(txs[unlabelled_inds], dim=0), dim=4)
+    y_unlab = torch.stack(tys[unlabelled_inds], dim=0)
+    x_lab = torch.squeeze(torch.stack(txs[labelled_inds],dim=0), dim =4)
+    y_lab = torch.stack(tys[labelled_inds],dim=0)
+
+    print(x_unlab.size(), "unlab size")
+
+
+
+labset = torch.utils.data.TensorDataset(x_lab, y_lab)
+unlabset = torch.utils.data.TensorDataset(x_unlab, y_unlab)
+
+labloader = torch.utils.data.DataLoader(labset, batch_size=args.batchSize,
+                                         shuffle=True, num_workers=int(1), drop_last = False)
+
+unlabloader = torch.utils.data.DataLoader(unlabset, batch_size=args.batchSize,
+                                         shuffle=False, num_workers=int(1), drop_last = True)
+
+
+# labloader = dataloader
+# unlabloader = dataloader
 
 
 
 
 netG = _netG(ngpu, nz, ngf, nc, args)
+netD = _netD(ngpu, ndf, nc, nb_label, args)
+
+
+if (args.resume == 1):
+    epoch  = int(args.netD[-6:-4])
+
+
 
 if args.netG != '':
     netG.load_state_dict(torch.load(args.netG))
 print(netG)
 
 
-netD = _netD(ngpu, ndf, nc, nb_label, args)
+
+
 
 if args.netD != '':
     netD.load_state_dict(torch.load(args.netD))
@@ -190,19 +360,6 @@ c_label = torch.LongTensor(args.batchSize,1)
 
 real_label = 1
 fake_label = 0
-
-if args.cuda:
-    netD.cuda()
-    netG.cuda()
-    netD = torch.nn.parallel.DataParallel(netD, device_ids=[0, 3])
-    netG = torch.nn.parallel.DataParallel(netG, device_ids=[0, 3])
-    d_criterion.cuda()
-    c_criterion.cuda()
-    gen_criterion.cuda()
-    input, d_label = input.cuda(), d_label.cuda()
-    input2 = input2.cuda()
-    c_label = c_label.cuda()
-    noise, fixed_noise = noise.cuda(), fixed_noise.cuda()
 
 
 
@@ -225,6 +382,20 @@ fixed_noise_ = (torch.from_numpy(fixed_noise_))
 fixed_noise_ = fixed_noise_.resize_(args.batchSize,nz,1,1)
 fixed_noise.copy_(fixed_noise_)
 
+if args.cuda:
+    netD.cuda()
+    netG.cuda()
+    netD = torch.nn.parallel.DataParallel(netD, device_ids=[0,1])
+    netG = torch.nn.parallel.DataParallel(netG, device_ids=[0,1])
+    d_criterion.cuda()
+    c_criterion.cuda()
+    gen_criterion.cuda()
+    input, d_label = input.cuda(), d_label.cuda()
+    input2 = input2.cuda()
+    c_label = c_label.cuda()
+    noise, fixed_noise = noise.cuda(), fixed_noise.cuda()
+
+
 #costs
 # output
 
@@ -232,8 +403,8 @@ fixed_noise.copy_(fixed_noise_)
 optimizerD = optim.Adam(netD.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
 optimizerG = optim.Adam(netG.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
 
-schedulerD = torch.optim.lr_scheduler.StepLR(optimizerD, step_size=50, gamma=0.2)
-schedulerG = torch.optim.lr_scheduler.StepLR(optimizerG, step_size=50, gamma=0.2)
+schedulerD = torch.optim.lr_scheduler.StepLR(optimizerD, step_size=1, gamma=0.2)
+schedulerG = torch.optim.lr_scheduler.StepLR(optimizerG, step_size=1, gamma=0.2)
 
 
 def test(predict, labels):
@@ -251,7 +422,14 @@ def feature_loss(X1, X2):
 
 loss_g = list()
 loss_d = list()
-for epoch in range(args.niter):
+if args.resume == 1:
+    start_iter = epoch
+else:
+    start_iter = 0
+
+
+
+for epoch in range(start_iter, start_iter + args.niter):
     # schedulerG.step()
     # schedulerD.step()
 
@@ -271,6 +449,8 @@ for epoch in range(args.niter):
         x_unlab.append(img)
         y_unlab.append(label)
     
+    # print(img.size())
+    # input()
     total_correct_unl = 0
     total_length_unl = 0
 
@@ -290,18 +470,30 @@ for epoch in range(args.niter):
         unl_label = y_unlab[i]
         img = x_lab[i2]
 
+        if (img.size()[0] != batch_size):
+            x_lab = []
+            y_lab = []   
+            for data in labloader:
+                img, label = data
+                x_lab.append(img)
+                y_lab.append(label)
+
+
         if args.cuda:
             img = img.cuda()
 
+
+        # print(img.size())
         input.resize_(img.size()).copy_(img)
-        input2.resize_(img.size()).copy_(img2)
+        input2.resize_(img2.size()).copy_(img2)
 
 
 
         d_label.resize_(batch_size,1).fill_(real_label)
 
 
-        c_label.resize_(batch_size).copy_(label)
+        c_label.resize_(label.size()).copy_(label)
+        c_label = torch.squeeze(c_label)
 
    
         inputv = Variable(input)
@@ -312,20 +504,23 @@ for epoch in range(args.niter):
 
         discriminate, before, after, last = netD(inputv)
 
+        # print(label.size(), "label size")
+        # print(c_label, "c_label")
+        # print(before, "before")
         c_errD_labelled = c_criterion(before, c_labelv)
 
         errD_real = c_errD_labelled
         errD_real.backward()
         
-        input.resize_(img.size()).copy_(img2)
+        input.resize_(img2.size()).copy_(img2)
         inputv = Variable(input)
 
 
         discriminate2, before2, after2, last2 = netD(inputv)
 
-        l_lab = Variable(before.data[torch.from_numpy(np.arange(batch_size)).cuda(),c_label])
+        # l_lab = Variable(before.data[torch.from_numpy(np.arange(batch_size)).cuda(),c_label])
 
-        l_unl = helper.log_sum_exp(before2)
+        # l_unl = helper.log_sum_exp(before2)
 
 
 
@@ -334,6 +529,7 @@ for epoch in range(args.niter):
         correct, length = test(after, c_label)
         c_label.resize_(batch_size).copy_(unl_label)
 
+        # print(c_label.size(), "size")
         correct_unl, length_unl = test(after2, c_label)
 
 
@@ -430,9 +626,9 @@ for epoch in range(args.niter):
 
         loss_d.append(errD.detach().data)
         loss_g.append(errG.detach().data)
-        print('[%d/%d][%d/%d] Loss_D: %.4f Fake_Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f Correct_l: %.4f Correct_unl: %.4f Length: %.4f'
+        print('[%d/%d][%d/%d] Loss_D: %.4f Fake_Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f Correct_l: %.4f Lab_Length: %.4f Correct_unl: %.4f Unlab_Length: %.4f' 
               % (epoch, args.niter, i, len(x_unlab),
-                 errD.data[0], errD_fake.data[0], errG.data[0], D_x, D_G_z1, D_G_z2, correct, correct_unl, length))
+                 errD.data[0], errD_fake.data[0], errG.data[0], D_x, D_G_z1, D_G_z2, correct, length, correct_unl,  length_unl))
         if i % 100 == 0:
             vutils.save_image(img,
                     '%s/real_samples.png' % args.outf,

@@ -50,3 +50,10 @@ def read_dataset(hdf5_path):
     labels = hdf5_file.root.labels[:]
     hdf5_file.close()
     return img_data, labels
+
+def read_unlab_dataset(hdf5_path): 
+    hdf5_file = tables.open_file(hdf5_path, mode='r') # open the hdf5 file
+    img_data = hdf5_file.root.data[:]
+    meta_data = hdf5_file.root.metadata[:]
+    hdf5_file.close()
+    return img_data
